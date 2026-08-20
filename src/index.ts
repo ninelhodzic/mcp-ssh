@@ -17,6 +17,7 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import { createHostVerifier } from './host-key-verify.js';
 
 // Connection pool to manage SSH connections
 const connectionPool = new Map<string, NodeSSH>();
@@ -548,11 +549,15 @@ class SSHMCPServer {
 
     const ssh = new NodeSSH();
     
+    // Host key verification against known_hosts (fail closed; see src/host-key-verify.ts)
+    const hostKeyCheck = createHostVerifier(params.host, params.port);
+
     try {
       const connectConfig: any = {
         host: params.host,
         port: params.port,
         username: params.username,
+        hostVerifier: hostKeyCheck.hostVerifier,
       };
 
       if (params.privateKeyPath) {
@@ -591,7 +596,7 @@ class SSHMCPServer {
     } catch (error) {
       throw new McpError(
         ErrorCode.InternalError,
-        `SSH connection failed: ${error instanceof Error ? error.message : String(error)}`
+        `SSH connection failed: ${hostKeyCheck.lastFailure() ?? (error instanceof Error ? error.message : String(error))}`
       );
     }
   }
@@ -1195,11 +1200,15 @@ class SSHMCPServer {
 
     const ssh = new NodeSSH();
     
+    // Host key verification against known_hosts (fail closed; see src/host-key-verify.ts)
+    const hostKeyCheck = createHostVerifier(credential.host, credential.port);
+
     try {
       const connectConfig: any = {
         host: credential.host,
         port: credential.port,
         username: credential.username,
+        hostVerifier: hostKeyCheck.hostVerifier,
       };
 
       if (credential.privateKeyPath) {
@@ -1242,7 +1251,7 @@ class SSHMCPServer {
     } catch (error) {
       throw new McpError(
         ErrorCode.InternalError,
-        `SSH connection failed: ${error instanceof Error ? error.message : String(error)}`
+        `SSH connection failed: ${hostKeyCheck.lastFailure() ?? (error instanceof Error ? error.message : String(error))}`
       );
     }
   }
