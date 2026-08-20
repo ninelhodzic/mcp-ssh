@@ -18,6 +18,7 @@ import { EventEmitter } from 'events';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { createHostVerifier } from './host-key-verify.js';
+import { shellQuote, isValidEnvVarName } from './shell-quote.js';
 
 // Connection pool to manage SSH connections
 const connectionPool = new Map<string, NodeSSH>();
@@ -688,7 +689,7 @@ class SSHMCPServer {
 
         if (params.createDirectories) {
           const targetDir = path.dirname(params.targetPath);
-          await targetSSH.execCommand(`mkdir -p "${targetDir}"`);
+          await targetSSH.execCommand(`mkdir -p ${shellQuote(targetDir)}`);
         }
 
         await targetSSH.putFile(params.sourcePath, params.targetPath);
@@ -750,7 +751,7 @@ class SSHMCPServer {
           
           if (params.createDirectories) {
             const targetDir = path.dirname(params.targetPath);
-            await targetSSH.execCommand(`mkdir -p "${targetDir}"`);
+            await targetSSH.execCommand(`mkdir -p ${shellQuote(targetDir)}`);
           }
           
           await targetSSH.putFile(tempFile, params.targetPath);
@@ -814,7 +815,7 @@ class SSHMCPServer {
         }
 
         const lsCommand = params.showHidden ? 'ls -la' : 'ls -l';
-        const result = await ssh.execCommand(`${lsCommand} "${params.remotePath}"`);
+        const result = await ssh.execCommand(`${lsCommand} ${shellQuote(params.remotePath)}`);
         
         if (result.code !== 0) {
           throw new Error(`ls command failed: ${result.stderr}`);
@@ -872,7 +873,7 @@ class SSHMCPServer {
           );
         }
 
-        const result = await ssh.execCommand(`stat "${params.filePath}"`);
+        const result = await ssh.execCommand(`stat ${shellQuote(params.filePath)}`);
         
         if (result.code !== 0) {
           throw new Error(`stat command failed: ${result.stderr}`);
@@ -1269,7 +1270,7 @@ class SSHMCPServer {
 
     try {
       // Verify the directory exists
-      const result = await context.ssh.execCommand(`test -d "${params.workingDirectory}" && echo "exists"`);
+      const result = await context.ssh.execCommand(`test -d ${shellQuote(params.workingDirectory)} && echo "exists"`);
       if (result.code !== 0) {
         throw new McpError(
           ErrorCode.InvalidParams,
@@ -1366,7 +1367,15 @@ class SSHMCPServer {
       
       // Build environment variables prefix
       if (params.envVars) {
-        const envVarStrings = Object.entries(params.envVars).map(([key, value]) => `${key}="${value}"`);
+        const envVarStrings = Object.entries(params.envVars).map(([key, value]) => {
+          if (!isValidEnvVarName(key)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `Invalid environment variable name: '${key}'`
+            );
+          }
+          return `${key}=${shellQuote(value)}`;
+        });
         envPrefix = envVarStrings.join(' ') + ' ';
       }
       
@@ -1374,7 +1383,7 @@ class SSHMCPServer {
         case 'compose':
           command = `${envPrefix}docker-compose`;
           if (params.composeFile && params.composeFile !== 'docker-compose.yml') {
-            command += ` -f ${params.composeFile}`;
+            command += ` -f ${shellQuote(params.composeFile)}`;
           }
           command += ' up';
           if (params.detached) {
@@ -1392,10 +1401,16 @@ class SSHMCPServer {
           command = `${envPrefix}docker build`;
           if (params.buildArgs) {
             Object.entries(params.buildArgs).forEach(([key, value]) => {
-              command += ` --build-arg ${key}="${value}"`;
+              if (!isValidEnvVarName(key)) {
+                throw new McpError(
+                  ErrorCode.InvalidParams,
+                  `Invalid build argument name: '${key}'`
+                );
+              }
+              command += ` --build-arg ${key}=${shellQuote(value)}`;
             });
           }
-          command += ` -t ${params.imageName} .`;
+          command += ` -t ${shellQuote(params.imageName)} .`;
           break;
           
         case 'run':
@@ -1410,19 +1425,19 @@ class SSHMCPServer {
             command += ' -d';
           }
           if (params.containerName) {
-            command += ` --name ${params.containerName}`;
+            command += ` --name ${shellQuote(params.containerName)}`;
           }
           if (params.ports) {
             params.ports.forEach(port => {
-              command += ` -p ${port}`;
+              command += ` -p ${shellQuote(port)}`;
             });
           }
           if (params.volumes) {
             params.volumes.forEach(volume => {
-              command += ` -v ${volume}`;
+              command += ` -v ${shellQuote(volume)}`;
             });
           }
-          command += ` ${params.imageName}`;
+          command += ` ${shellQuote(params.imageName)}`;
           break;
       }
       
